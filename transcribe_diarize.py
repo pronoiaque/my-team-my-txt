@@ -88,7 +88,11 @@ def diarize(wav: Path, hf_token: str | None, device: str, num_speakers: int | No
     from pyannote.audio import Pipeline
 
     # hf_token n'est utile qu'au 1er téléchargement ; ensuite le cache local suffit (mode hors ligne).
-    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=hf_token)
+    # pyannote 3.x : use_auth_token ; 4.x : token. hf_token=None -> token enregistré par hf_login_gui.py / huggingface-cli login
+    try:
+        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=hf_token)
+    except TypeError:
+        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=hf_token)
     if pipeline is None:
         raise RuntimeError("Impossible de charger le modèle pyannote : token HF absent/invalide ou conditions non acceptées (voir README).")
     pipeline.to(torch.device(device))

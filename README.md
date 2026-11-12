@@ -25,16 +25,23 @@ pip install -r requirements.txt
 
 Les modèles pyannote sont gratuits mais « gated » : il faut accepter leurs conditions sur HuggingFace (connexion Internet uniquement pour ce téléchargement initial).
 
-1. Créer un compte sur <https://huggingface.co>.
-2. Accepter les conditions sur <https://hf.co/pyannote/speaker-diarization-3.1> et <https://hf.co/pyannote/segmentation-3.0>.
-3. Créer un token de lecture : <https://hf.co/settings/tokens>.
+**Méthode simple — interface graphique :**
+
+```bash
+python hf_login_gui.py
+```
+
+La fenêtre vous guide : créer un compte, créer un token « Read », le coller, cliquer sur « Se connecter et vérifier ». Elle enregistre le token localement (le script le retrouve ensuite seul) et indique avec ✓/✗ si les conditions de chaque modèle sont acceptées, avec un bouton pour ouvrir la page à accepter.
+(Tkinter est inclus avec Python sur Windows/macOS ; sous Linux : `apt install python3-tk`.)
+
+**Méthode manuelle :** créer un compte sur <https://huggingface.co>, accepter les conditions sur <https://hf.co/pyannote/speaker-diarization-3.1> et <https://hf.co/pyannote/segmentation-3.0>, créer un token de lecture sur <https://hf.co/settings/tokens>, puis le passer via `--hf-token` ou la variable `HF_TOKEN`.
 
 Le modèle Whisper est téléchargé automatiquement au premier lancement. Ensuite, tout est en cache (`~/.cache/huggingface`) et le script fonctionne **hors ligne** (`HF_HUB_OFFLINE=1` possible).
 
 ## Utilisation
 
 ```bash
-export HF_TOKEN=hf_xxxxxxxx          # 1er lancement seulement (Windows : set HF_TOKEN=...)
+# (si vous êtes passé par hf_login_gui.py, aucun token à fournir)
 python transcribe_diarize.py discussion.mp4
 ```
 
