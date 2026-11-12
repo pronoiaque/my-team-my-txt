@@ -64,8 +64,12 @@ def transcribe(wav: Path, model_size: str, device: str, compute_type: str, langu
     from faster_whisper import WhisperModel
 
     model = WhisperModel(model_size, device=device, compute_type=compute_type, cpu_threads=os.cpu_count() or 4)
+    # On charge nous-mêmes le WAV (16 kHz mono) : évite le décodeur PyAV de faster-whisper,
+    # dont certaines versions sont incompatibles entre elles (erreur « metadata_errors »).
+    import soundfile as sf
+    audio, _sr = sf.read(str(wav), dtype="float32")
     segments, info = model.transcribe(
-        str(wav),
+        audio,
         language=language,
         word_timestamps=True,
         vad_filter=True,               # ignore les silences -> moins d'hallucinations
