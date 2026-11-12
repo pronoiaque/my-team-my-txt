@@ -284,6 +284,10 @@ def main() -> None:
                     help="Token HuggingFace (1er lancement uniquement ; ou variable HF_TOKEN)")
     args = ap.parse_args()
 
+    if args.hf_token:
+        # Propague le token à tout le code HF (téléchargement du modèle Whisper inclus)
+        os.environ["HF_TOKEN"] = args.hf_token
+
     if not args.audio.exists():
         sys.exit(f"Fichier introuvable : {args.audio}")
 
