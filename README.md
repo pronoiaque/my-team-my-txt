@@ -25,14 +25,22 @@ pip install -r requirements.txt
 
 Les modèles pyannote sont gratuits mais « gated » : il faut accepter leurs conditions sur HuggingFace (connexion Internet uniquement pour ce téléchargement initial).
 
-**Méthode simple — interface graphique :**
+**Sous WSL / en terminal (recommandé si l'interface graphique ne s'ouvre pas) :**
+
+```bash
+python hf_login.py
+```
+
+Même parcours en mode texte : les liens s'ouvrent dans le navigateur Windows (ou sont affichés pour copier-coller), le token se saisit sans affichage, puis l'accès aux modèles est vérifié ✓/✗.
+
+**Interface graphique :**
 
 ```bash
 python hf_login_gui.py
 ```
 
 La fenêtre vous guide : créer un compte, créer un token « Read », le coller, cliquer sur « Se connecter et vérifier ». Elle enregistre le token localement (le script le retrouve ensuite seul) et indique avec ✓/✗ si les conditions de chaque modèle sont acceptées, avec un bouton pour ouvrir la page à accepter.
-(Tkinter est inclus avec Python sur Windows/macOS ; sous Linux : `apt install python3-tk`.)
+(Tkinter est inclus avec Python sur Windows/macOS ; sous Linux/WSL : `apt install python3-tk`, et un affichage est requis — WSLg sous Windows 11. Sans cela, `hf_login_gui.py` bascule automatiquement sur la version terminal.)
 
 **Méthode manuelle :** créer un compte sur <https://huggingface.co>, accepter les conditions sur <https://hf.co/pyannote/speaker-diarization-3.1> et <https://hf.co/pyannote/segmentation-3.0>, créer un token de lecture sur <https://hf.co/settings/tokens>, puis le passer via `--hf-token` ou la variable `HF_TOKEN`.
 

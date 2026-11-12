@@ -6,38 +6,20 @@ le retrouve ensuite tout seul, sans --hf-token ni variable HF_TOKEN.
 """
 from __future__ import annotations
 
+import os
+import sys
 import threading
-import tkinter as tk
-import webbrowser
-from tkinter import messagebox, ttk
 
-GATED_MODELS = [
-    "pyannote/speaker-diarization-3.1",
-    "pyannote/segmentation-3.0",
-]
-TOKENS_URL = "https://huggingface.co/settings/tokens"
-SIGNUP_URL = "https://huggingface.co/join"
+from hf_login import GATED_MODELS, SIGNUP_URL, TOKENS_URL, check_model_access, open_url
+
+try:
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+except ImportError:  # tkinter absent (ex. WSL sans python3-tk)
+    tk = None
 
 
-def check_model_access(repo: str, token: str) -> tuple[bool, str]:
-    """True si les conditions du modèle ont été acceptées pour ce compte."""
-    from huggingface_hub import hf_hub_download
-    from huggingface_hub.errors import EntryNotFoundError, GatedRepoError, HfHubHTTPError
-
-    try:
-        hf_hub_download(repo, "config.yaml", token=token)
-        return True, "accès OK"
-    except GatedRepoError:
-        return False, "conditions non acceptées"
-    except EntryNotFoundError:
-        return True, "accès OK"  # le dépôt répond, simplement sans ce fichier
-    except HfHubHTTPError as e:
-        return False, f"erreur HTTP ({getattr(e.response, 'status_code', '?')})"
-    except Exception as e:  # réseau, etc.
-        return False, f"{type(e).__name__}: {e}"
-
-
-class App(tk.Tk):
+class App(tk.Tk if tk else object):
     def __init__(self) -> None:
         super().__init__()
         self.title("Connexion HuggingFace")
@@ -46,8 +28,8 @@ class App(tk.Tk):
 
         ttk.Label(self, text="1. Créez un compte (gratuit) puis un token de type « Read » :",
                   wraplength=460).grid(row=0, column=0, columnspan=3, sticky="w", **pad)
-        ttk.Button(self, text="Créer un compte", command=lambda: webbrowser.open(SIGNUP_URL)).grid(row=1, column=0, **pad)
-        ttk.Button(self, text="Créer / voir mes tokens", command=lambda: webbrowser.open(TOKENS_URL)).grid(row=1, column=1, **pad)
+        ttk.Button(self, text="Créer un compte", command=lambda: open_url(SIGNUP_URL)).grid(row=1, column=0, **pad)
+        ttk.Button(self, text="Créer / voir mes tokens", command=lambda: open_url(TOKENS_URL)).grid(row=1, column=1, **pad)
 
         ttk.Label(self, text="2. Collez votre token (hf_…) :").grid(row=2, column=0, columnspan=3, sticky="w", **pad)
         self.token = tk.StringVar()
@@ -66,7 +48,7 @@ class App(tk.Tk):
             lbl = ttk.Label(self, text=f"?  {repo}")
             lbl.grid(row=6 + i, column=0, columnspan=2, sticky="w", padx=12)
             b = ttk.Button(self, text="Ouvrir", width=8,
-                           command=lambda r=repo: webbrowser.open(f"https://huggingface.co/{r}"))
+                           command=lambda r=repo: open_url(f"https://huggingface.co/{r}"))
             b.grid(row=6 + i, column=2, padx=12, pady=2)
             self.rows[repo] = (lbl, b)
 
@@ -115,5 +97,23 @@ class App(tk.Tk):
                             "à accepter : ouvrez chaque modèle ✗, acceptez, puis recliquez sur « Se connecter et vérifier ».")
 
 
+def main() -> None:
+    no_display = sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    if tk is None or no_display:
+        print("Interface graphique indisponible (tkinter ou affichage manquant, fréquent sous WSL) "
+              "-> bascule sur la version terminal.\n")
+        from hf_login import main as cli_main
+        cli_main()
+        return
+    try:
+        app = App()
+    except Exception as e:  # ex. tk.TclError : pas d'écran
+        print(f"Interface graphique indisponible ({e}) -> version terminal.\n")
+        from hf_login import main as cli_main
+        cli_main()
+        return
+    app.mainloop()
+
+
 if __name__ == "__main__":
-    App().mainloop()
+    main()
