@@ -305,9 +305,20 @@ def main() -> None:
     def local_params():
         import torch
         dev = args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+        vram_gb = 0.0
+        if dev == "cuda":
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            print(f"[gpu] {torch.cuda.get_device_name(0)} — {vram_gb:.1f} Go de VRAM")
         if not args.model:
-            args.model = "large-v3" if dev == "cuda" else "small"
-        return dev, args.compute_type or ("float16" if dev == "cuda" else "int8")
+            # Choix du modèle selon la mémoire disponible (la diarisation pyannote partage aussi la carte)
+            if dev == "cuda" and vram_gb >= 8:
+                args.model = "large-v3"
+            elif dev == "cuda" and vram_gb >= 5:
+                args.model = "medium"
+            else:
+                args.model = "small"
+        # "auto" : CTranslate2 choisit le meilleur type supporté par la carte (ex. float32 sur GTX 9xx, sans float16 rapide)
+        return dev, args.compute_type or ("auto" if dev == "cuda" else "int8")
 
     with tempfile.TemporaryDirectory() as tmp:
         wav, mp3 = Path(tmp) / "audio.wav", Path(tmp) / "audio.mp3"
