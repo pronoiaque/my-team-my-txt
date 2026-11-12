@@ -63,7 +63,7 @@ class Turn:
 def transcribe(wav: Path, model_size: str, device: str, compute_type: str, language: str | None) -> list[Word]:
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    model = WhisperModel(model_size, device=device, compute_type=compute_type, cpu_threads=os.cpu_count() or 4)
     segments, info = model.transcribe(
         str(wav),
         language=language,
@@ -90,7 +90,7 @@ def diarize(wav: Path, hf_token: str | None, device: str, num_speakers: int | No
     # hf_token n'est utile qu'au 1er téléchargement ; ensuite le cache local suffit (mode hors ligne).
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=hf_token)
     if pipeline is None:
-        sys.exit("Impossible de charger le modèle pyannote : token HF invalide ou conditions d'utilisation non acceptées (voir README).")
+        raise RuntimeError("Impossible de charger le modèle pyannote : token HF absent/invalide ou conditions non acceptées (voir README).")
     pipeline.to(torch.device(device))
 
     kwargs = {}
@@ -159,6 +159,85 @@ def rename_speakers(turns: list[Turn], words: list[Word], names: list[str] | Non
 
 
 # --------------------------------------------------------------------------- #
+# Backends EN LIGNE (repli) — l'audio est envoyé au fournisseur !
+# --------------------------------------------------------------------------- #
+def to_mp3(src: Path, dst: Path) -> None:
+    """MP3 mono 16 kHz 48 kbit/s : ~20 Mo/h au lieu de ~115 Mo/h en WAV."""
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-vn", "-ac", "1",
+                    "-ar", "16000", "-b:a", "48k", str(dst)], check=True)
+
+
+def online_assemblyai(audio: Path, key: str, language: str | None, num_speakers: int | None) -> list[Word]:
+    import time
+    import requests
+
+    h = {"authorization": key}
+    base = "https://api.assemblyai.com/v2"
+    print("[online] AssemblyAI : envoi du fichier…")
+    with open(audio, "rb") as f:
+        r = requests.post(f"{base}/upload", headers=h, data=f, timeout=600)
+    r.raise_for_status()
+    body = {"audio_url": r.json()["upload_url"], "speaker_labels": True, "punctuate": True, "format_text": True}
+    if language:
+        body["language_code"] = language
+    else:
+        body["language_detection"] = True
+    if num_speakers:
+        body["speakers_expected"] = num_speakers
+    r = requests.post(f"{base}/transcript", headers=h, json=body, timeout=60)
+    r.raise_for_status()
+    tid = r.json()["id"]
+    while True:
+        j = requests.get(f"{base}/transcript/{tid}", headers=h, timeout=60).json()
+        if j["status"] == "completed":
+            break
+        if j["status"] == "error":
+            raise RuntimeError(f"AssemblyAI : {j.get('error')}")
+        print(f"[online] statut : {j['status']}…", end="\r", flush=True)
+        time.sleep(5)
+    print()
+    return [Word(w["start"] / 1000, w["end"] / 1000, " " + w["text"], f"SPEAKER_{w.get('speaker') or '?'}")
+            for w in j["words"]]
+
+
+def online_deepgram(audio: Path, key: str, language: str | None, num_speakers: int | None) -> list[Word]:
+    import requests
+
+    params = {"model": "nova-3", "diarize": "true", "punctuate": "true", "smart_format": "true"}
+    params["language"] = language or "multi"
+    print("[online] Deepgram : envoi du fichier…")
+    with open(audio, "rb") as f:
+        r = requests.post("https://api.deepgram.com/v1/listen", params=params, data=f, timeout=1800,
+                          headers={"Authorization": f"Token {key}", "Content-Type": "audio/mpeg"})
+    r.raise_for_status()
+    ws = r.json()["results"]["channels"][0]["alternatives"][0]["words"]
+    return [Word(w["start"], w["end"], " " + w.get("punctuated_word", w["word"]), f"SPEAKER_{w.get('speaker', '?')}")
+            for w in ws]
+
+
+ONLINE = {
+    "assemblyai": ("ASSEMBLYAI_API_KEY", online_assemblyai),
+    "deepgram": ("DEEPGRAM_API_KEY", online_deepgram),
+}
+
+
+def run_online(provider: str, audio: Path, language: str | None, num_speakers: int | None) -> list[Word]:
+    env, fn = ONLINE[provider]
+    key = os.environ.get(env)
+    if not key:
+        raise RuntimeError(f"Clé API manquante : définissez la variable d'environnement {env}.")
+    return fn(audio, key, language, num_speakers)
+
+
+def run_local(wav: Path, args, device: str, compute_type: str, language: str | None) -> list[Word]:
+    words = transcribe(wav, args.model, device, compute_type, language)
+    print("[local] Diarisation (qui parle ?)…")
+    annotation = diarize(wav, args.hf_token, device, args.num_speakers or None, args.min_speakers, args.max_speakers)
+    assign_speakers(words, annotation)
+    return words
+
+
+# --------------------------------------------------------------------------- #
 # Sorties
 # --------------------------------------------------------------------------- #
 def write_outputs(turns: list[Turn], words: list[Word], out_base: Path) -> None:
@@ -186,8 +265,14 @@ def main() -> None:
     ap.add_argument("--min-speakers", type=int)
     ap.add_argument("--max-speakers", type=int)
     ap.add_argument("--names", nargs="+", help="Noms dans l'ordre d'apparition, ex : --names Alice Bob Chloé David")
-    ap.add_argument("-m", "--model", default="large-v3",
-                    help="Modèle Whisper : tiny/base/small/medium/large-v3/distil-large-v3 (défaut : large-v3)")
+    ap.add_argument("-m", "--model", default=None,
+                    help="Modèle Whisper : tiny/base/small/medium/large-v3 (défaut : small sur CPU, large-v3 sur GPU)")
+    ap.add_argument("--backend", default="local", choices=["local", "online", "auto"],
+                    help="local (défaut, hors ligne) | online (service cloud) | auto (local, repli en ligne si échec)")
+    ap.add_argument("--provider", default="assemblyai", choices=list(ONLINE),
+                    help="Service en ligne utilisé pour online/auto (défaut : assemblyai)")
+    ap.add_argument("--allow-online", action="store_true",
+                    help="Autorise explicitement l'envoi de l'audio à un service tiers (obligatoire pour online/auto)")
     ap.add_argument("-l", "--language", default="fr", help="Code langue (défaut : fr ; 'auto' pour détection)")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     ap.add_argument("--compute-type", default=None, help="int8 (CPU, défaut) / float16 (GPU, défaut) / int8_float16...")
@@ -198,27 +283,41 @@ def main() -> None:
     if not args.audio.exists():
         sys.exit(f"Fichier introuvable : {args.audio}")
 
-    import torch
-    device = args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
-    compute_type = args.compute_type or ("float16" if device == "cuda" else "int8")
+    if args.backend != "local" and not args.allow_online:
+        sys.exit("Les modes online/auto envoient l'audio à un service tiers : ajoutez --allow-online pour confirmer.")
+
     language = None if args.language == "auto" else args.language
     args.out.mkdir(parents=True, exist_ok=True)
     out_base = args.out / args.audio.stem
 
+    def local_params():
+        import torch
+        dev = args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+        if not args.model:
+            args.model = "large-v3" if dev == "cuda" else "small"
+        return dev, args.compute_type or ("float16" if dev == "cuda" else "int8")
+
     with tempfile.TemporaryDirectory() as tmp:
-        wav = Path(tmp) / "audio.wav"
-        print("[1/4] Conversion audio…")
+        wav, mp3 = Path(tmp) / "audio.wav", Path(tmp) / "audio.mp3"
+        print("[1/3] Conversion audio…")
         to_wav(args.audio, wav)
 
-        print(f"[2/4] Transcription (modèle {args.model}, {device}/{compute_type})…")
-        words = transcribe(wav, args.model, device, compute_type, language)
+        words = None
+        if args.backend in ("local", "auto"):
+            try:
+                device, compute_type = local_params()
+                print(f"[2/3] Traitement LOCAL (Whisper {args.model}, {device}/{compute_type})…")
+                words = run_local(wav, args, device, compute_type, language)
+            except Exception as e:  # MemoryError, token absent, dépendance manquante...
+                if args.backend == "local":
+                    raise
+                print(f"\n[!] Échec du traitement local ({type(e).__name__}: {e})\n    -> repli sur {args.provider} (en ligne).")
+        if words is None:
+            to_mp3(wav, mp3)
+            print(f"[2/3] Traitement EN LIGNE ({args.provider})…")
+            words = run_online(args.provider, mp3, language, args.num_speakers or None)
 
-        print("[3/4] Diarisation (qui parle ?)…")
-        annotation = diarize(wav, args.hf_token, device, args.num_speakers or None,
-                             args.min_speakers, args.max_speakers)
-
-    print("[4/4] Fusion et écriture…")
-    assign_speakers(words, annotation)
+    print("[3/3] Mise en forme et écriture…")
     turns = build_turns(words)
     mapping = rename_speakers(turns, words, args.names)
     write_outputs(turns, words, out_base)

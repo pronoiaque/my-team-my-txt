@@ -3,3 +3,4 @@ pyannote.audio>=3.3,<5
 torch>=2.2
 torchaudio>=2.2
 soundfile>=0.12
+requests>=2.31
