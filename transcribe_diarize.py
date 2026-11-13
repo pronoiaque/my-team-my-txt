@@ -276,7 +276,15 @@ def run_local(wav: Path, args, device: str, compute_type: str, language: str | N
         except Exception:
             words = None
     if words is None:
-        words = transcribe(wav, args.model, device, compute_type, language)
+        try:
+            words = transcribe(wav, args.model, device, compute_type, language)
+        except RuntimeError as e:
+            if device != "cuda" or "out of memory" not in str(e).lower():
+                raise
+            print("\n[!] Mémoire GPU insuffisante pour Whisper -> repli sur le processeur (plus lent).")
+            import gc
+            gc.collect()
+            words = transcribe(wav, args.model, "cpu", "int8", language)
         cache.write_text(json.dumps({"key": key, "words": [{"start": w.start, "end": w.end, "text": w.text} for w in words]},
                                     ensure_ascii=False), encoding="utf-8")
     print("[local] Diarisation (qui parle ?)…")
