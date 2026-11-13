@@ -106,6 +106,16 @@ def diarize(wav: Path, hf_token: str | None, device: str, num_speakers: int | No
         raise RuntimeError("Impossible de charger le modèle pyannote : token HF absent/invalide ou conditions non acceptées (voir README).")
     pipeline.to(torch.device(device))
 
+    # Petite carte graphique : lots réduits pour éviter « CUDA out of memory »
+    if device == "cuda":
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        if vram_gb < 6:
+            for attr, val in (("segmentation_batch_size", 4), ("embedding_batch_size", 4)):
+                try:
+                    setattr(pipeline, attr, val)
+                except Exception:
+                    pass
+
     kwargs = {}
     if num_speakers:
         kwargs["num_speakers"] = num_speakers
@@ -119,7 +129,16 @@ def diarize(wav: Path, hf_token: str | None, device: str, num_speakers: int | No
     import soundfile as sf
     data, sr = sf.read(str(wav), dtype="float32", always_2d=True)
     waveform = torch.from_numpy(data.T)
-    result = pipeline({"waveform": waveform, "sample_rate": sr}, **kwargs)
+    try:
+        result = pipeline({"waveform": waveform, "sample_rate": sr}, **kwargs)
+    except torch.cuda.OutOfMemoryError:
+        # Carte saturée : on libère la VRAM et on refait la diarisation sur le processeur
+        print("\n[!] Mémoire GPU insuffisante pour la diarisation -> repli sur le processeur (plus lent).")
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        pipeline.to(torch.device("cpu"))
+        result = pipeline({"waveform": waveform, "sample_rate": sr}, **kwargs)
     # pyannote >= 4 renvoie un objet avec .speaker_diarization ; 3.x renvoie l'Annotation directement
     annotation = getattr(result, "speaker_diarization", result)
     return annotation
@@ -287,6 +306,7 @@ def write_outputs(turns: list[Turn], words: list[Word], out_base: Path) -> None:
 
 # --------------------------------------------------------------------------- #
 def main() -> None:
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     ap = argparse.ArgumentParser(description="Transcription locale avec identification des locuteurs.")
     ap.add_argument("audio", type=Path, help="Fichier audio/vidéo (mp4, m4a, mp3, wav...)")
     ap.add_argument("-o", "--out", type=Path, default=Path("sortie"), help="Dossier de sortie (défaut : ./sortie)")
