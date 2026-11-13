@@ -16,7 +16,8 @@ import sys
 import webbrowser
 
 GATED_MODELS = [
-    "pyannote/speaker-diarization-3.1",
+    "pyannote/speaker-diarization-community-1",  # utilisé par pyannote.audio 4.x
+    "pyannote/speaker-diarization-3.1",          # utilisé par pyannote.audio 3.x
     "pyannote/segmentation-3.0",
 ]
 TOKENS_URL = "https://huggingface.co/settings/tokens"

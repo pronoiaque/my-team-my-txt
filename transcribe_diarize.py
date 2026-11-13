@@ -92,11 +92,16 @@ def diarize(wav: Path, hf_token: str | None, device: str, num_speakers: int | No
     from pyannote.audio import Pipeline
 
     # hf_token n'est utile qu'au 1er téléchargement ; ensuite le cache local suffit (mode hors ligne).
-    # pyannote 3.x : use_auth_token ; 4.x : token. hf_token=None -> token enregistré par hf_login_gui.py / huggingface-cli login
+    # pyannote 4.x utilise le modèle « community-1 » ; 3.x utilise « speaker-diarization-3.1 »
+    from importlib.metadata import version
+    major = int(version("pyannote.audio").split(".")[0])
+    model_id = "pyannote/speaker-diarization-community-1" if major >= 4 else "pyannote/speaker-diarization-3.1"
+    print(f"[pyannote] modèle : {model_id}")
+    # pyannote 3.x : use_auth_token ; 4.x : token. hf_token=None -> token enregistré par hf_login.py / huggingface-cli login
     try:
-        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=hf_token)
+        pipeline = Pipeline.from_pretrained(model_id, token=hf_token)
     except TypeError:
-        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=hf_token)
+        pipeline = Pipeline.from_pretrained(model_id, use_auth_token=hf_token)
     if pipeline is None:
         raise RuntimeError("Impossible de charger le modèle pyannote : token HF absent/invalide ou conditions non acceptées (voir README).")
     pipeline.to(torch.device(device))
@@ -238,7 +243,23 @@ def run_online(provider: str, audio: Path, language: str | None, num_speakers: i
 
 
 def run_local(wav: Path, args, device: str, compute_type: str, language: str | None) -> list[Word]:
-    words = transcribe(wav, args.model, device, compute_type, language)
+    # Cache : si la diarisation échoue, on ne refait pas la transcription (longue) au prochain lancement.
+    st = args.audio.stat()
+    key = {"model": args.model, "language": language, "size": st.st_size, "mtime": int(st.st_mtime)}
+    cache = args.out / f"{args.audio.stem}.whisper.json"
+    words = None
+    if cache.exists() and not args.no_cache:
+        try:
+            data = json.loads(cache.read_text(encoding="utf-8"))
+            if data.get("key") == key:
+                words = [Word(w["start"], w["end"], w["text"]) for w in data["words"]]
+                print(f"[whisper] transcription réutilisée depuis {cache} (--no-cache pour refaire)")
+        except Exception:
+            words = None
+    if words is None:
+        words = transcribe(wav, args.model, device, compute_type, language)
+        cache.write_text(json.dumps({"key": key, "words": [{"start": w.start, "end": w.end, "text": w.text} for w in words]},
+                                    ensure_ascii=False), encoding="utf-8")
     print("[local] Diarisation (qui parle ?)…")
     annotation = diarize(wav, args.hf_token, device, args.num_speakers or None, args.min_speakers, args.max_speakers)
     assign_speakers(words, annotation)
@@ -279,6 +300,7 @@ def main() -> None:
                     help="local (défaut, hors ligne) | online (service cloud) | auto (local, repli en ligne si échec)")
     ap.add_argument("--provider", default="assemblyai", choices=list(ONLINE),
                     help="Service en ligne utilisé pour online/auto (défaut : assemblyai)")
+    ap.add_argument("--no-cache", action="store_true", help="Refait la transcription Whisper même si un cache existe")
     ap.add_argument("--allow-online", action="store_true",
                     help="Autorise explicitement l'envoi de l'audio à un service tiers (obligatoire pour online/auto)")
     ap.add_argument("-l", "--language", default="fr", help="Code langue (défaut : fr ; 'auto' pour détection)")

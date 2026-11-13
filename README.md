@@ -42,7 +42,7 @@ python hf_login_gui.py
 La fenêtre vous guide : créer un compte, créer un token « Read », le coller, cliquer sur « Se connecter et vérifier ». Elle enregistre le token localement (le script le retrouve ensuite seul) et indique avec ✓/✗ si les conditions de chaque modèle sont acceptées, avec un bouton pour ouvrir la page à accepter.
 (Tkinter est inclus avec Python sur Windows/macOS ; sous Linux/WSL : `apt install python3-tk`, et un affichage est requis — WSLg sous Windows 11. Sans cela, `hf_login_gui.py` bascule automatiquement sur la version terminal.)
 
-**Méthode manuelle :** créer un compte sur <https://huggingface.co>, accepter les conditions sur <https://hf.co/pyannote/speaker-diarization-3.1> et <https://hf.co/pyannote/segmentation-3.0>, créer un token de lecture sur <https://hf.co/settings/tokens>, puis le passer via `--hf-token` ou la variable `HF_TOKEN`.
+**Méthode manuelle :** créer un compte sur <https://huggingface.co>, accepter les conditions sur <https://hf.co/pyannote/speaker-diarization-community-1> (pyannote 4.x), <https://hf.co/pyannote/speaker-diarization-3.1> et <https://hf.co/pyannote/segmentation-3.0>, créer un token de lecture sur <https://hf.co/settings/tokens>, puis le passer via `--hf-token` ou la variable `HF_TOKEN`.
 
 Le modèle Whisper est téléchargé automatiquement au premier lancement. Ensuite, tout est en cache (`~/.cache/huggingface`) et le script fonctionne **hors ligne** (`HF_HUB_OFFLINE=1` possible).
 
@@ -106,6 +106,10 @@ L'audio est d'abord compressé en MP3 mono (~20 Mo/h) avant envoi. Les appels AP
   ```
 - `discussion.srt` — sous-titres (VLC, etc.)
 - `discussion.json` — tours de parole + chaque mot avec horodatage et locuteur
+
+## Reprise après échec
+
+La transcription Whisper (l'étape la plus longue) est mise en cache dans `sortie/<nom>.whisper.json`. Si la diarisation échoue (modèle non accessible, mémoire…), relancer la même commande reprend directement à la diarisation. `--no-cache` force à tout refaire.
 
 ## Conseils
 
